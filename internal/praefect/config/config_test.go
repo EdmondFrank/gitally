@@ -198,6 +198,27 @@ func TestConfigValidation(t *testing.T) {
 			},
 			errMsg: `virtual storage "default" has a default replication factor (2) which is higher than the number of storages (1)`,
 		},
+		{
+			desc: "sync minimal duration is too low",
+			changeConfig: func(cfg *Config) {
+				cfg.Sync.CheckInterval = config.Duration(minimalSyncCheckInterval - time.Nanosecond)
+			},
+			errMsg: `sync.check_interval is less then 1m0s, that could lead to a database performance problem`,
+		},
+		{
+			desc: "sync minimal duration is too low",
+			changeConfig: func(cfg *Config) {
+				cfg.Sync.RunInterval = config.Duration(minimalSyncRunInterval - time.Nanosecond)
+			},
+			errMsg: `sync.run_interval is less then 1m0s, that could lead to a database performance problem`,
+		},
+		{
+			desc: "sync minimal duration is too low",
+			changeConfig: func(cfg *Config) {
+				cfg.Sync.LivenessInterval = config.Duration(minimalSyncLivenessInterval - time.Nanosecond)
+			},
+			errMsg: `sync.liveness_interval is less then 5s, that could lead to a database performance problem`,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -210,6 +231,7 @@ func TestConfigValidation(t *testing.T) {
 					{Name: "secondary", Nodes: vs2Nodes},
 				},
 				Failover: Failover{ElectionStrategy: ElectionStrategySQL},
+				Sync:     DefaultSyncConfig(),
 			}
 
 			tc.changeConfig(&config)
@@ -312,6 +334,12 @@ func TestConfigParsing(t *testing.T) {
 					BootstrapInterval:        config.Duration(1 * time.Second),
 					MonitorInterval:          config.Duration(3 * time.Second),
 				},
+				Sync: Sync{
+					CheckInterval:       config.Duration(time.Second),
+					RunInterval:         config.Duration(3 * time.Second),
+					LivenessInterval:    config.Duration(2 * time.Second),
+					RepositoriesInBatch: 10,
+				},
 			},
 		},
 		{
@@ -331,6 +359,12 @@ func TestConfigParsing(t *testing.T) {
 					BootstrapInterval: config.Duration(5 * time.Second),
 					MonitorInterval:   config.Duration(10 * time.Second),
 				},
+				Sync: Sync{
+					CheckInterval:       config.Duration(time.Second),
+					RunInterval:         config.Duration(4 * time.Second),
+					LivenessInterval:    config.Duration(3 * time.Second),
+					RepositoriesInBatch: 11,
+				},
 			},
 		},
 		{
@@ -346,6 +380,12 @@ func TestConfigParsing(t *testing.T) {
 					ElectionStrategy:  ElectionStrategyPerRepository,
 					BootstrapInterval: config.Duration(time.Second),
 					MonitorInterval:   config.Duration(3 * time.Second),
+				},
+				Sync: Sync{
+					CheckInterval:       config.Duration(30 * time.Minute),
+					RunInterval:         config.Duration(24 * time.Hour),
+					LivenessInterval:    config.Duration(30 * time.Second),
+					RepositoriesInBatch: 16,
 				},
 			},
 		},

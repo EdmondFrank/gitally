@@ -36,6 +36,10 @@ const (
 	ElectionStrategySQL ElectionStrategy = "sql"
 	// ElectionStrategyPerRepository configures an SQL based strategy that elects different primaries per repository.
 	ElectionStrategyPerRepository ElectionStrategy = "per_repository"
+
+	minimalSyncCheckInterval    = time.Minute
+	minimalSyncRunInterval      = time.Minute
+	minimalSyncLivenessInterval = 5 * time.Second
 )
 
 type Failover struct {
@@ -125,7 +129,7 @@ type Config struct {
 	FailoverEnabled     bool            `toml:"failover_enabled"`
 	MemoryQueueEnabled  bool            `toml:"memory_queue_enabled"`
 	GracefulStopTimeout config.Duration `toml:"graceful_stop_timeout"`
-
+	Sync                Sync            `toml:"sync"`
 	// ForceCreateRepositories will enable force-creation of repositories in the
 	// coordinator when routing repository-scoped mutators. This must never be used
 	// outside of tests.
@@ -157,6 +161,7 @@ func FromFile(filePath string) (Config, error) {
 		Prometheus:     prometheus.DefaultConfig(),
 		// Sets the default Failover, to be overwritten when deserializing the TOML
 		Failover: Failover{Enabled: true, ElectionStrategy: ElectionStrategyPerRepository},
+		Sync:     DefaultSyncConfig(),
 	}
 	if err := toml.Unmarshal(b, conf); err != nil {
 		return Config{}, err
@@ -246,6 +251,18 @@ func (c *Config) Validate() error {
 				"virtual storage %q has a default replication factor (%d) which is higher than the number of storages (%d)",
 				virtualStorage.Name, virtualStorage.DefaultReplicationFactor, len(virtualStorage.Nodes),
 			)
+		}
+	}
+
+	if c.Sync.RunInterval.Duration() > 0 {
+		if c.Sync.CheckInterval.Duration() < minimalSyncCheckInterval {
+			return fmt.Errorf("sync.check_interval is less then %s, that could lead to a database performance problem", minimalSyncCheckInterval.String())
+		}
+		if c.Sync.RunInterval.Duration() < minimalSyncRunInterval {
+			return fmt.Errorf("sync.run_interval is less then %s, that could lead to a database performance problem", minimalSyncRunInterval.String())
+		}
+		if c.Sync.LivenessInterval.Duration() < minimalSyncLivenessInterval {
+			return fmt.Errorf("sync.liveness_interval is less then %s, that could lead to a database performance problem", minimalSyncLivenessInterval.String())
 		}
 	}
 
@@ -415,4 +432,28 @@ func (db DB) ToPQString(direct bool) string {
 	}
 
 	return strings.Join(fields, " ")
+}
+
+// Sync is to configure repository synchronisation operation.
+type Sync struct {
+	// CheckInterval is a time period used to check if operation should be executed.
+	// It is recommended to keep it less then run_interval configuration as some
+	// nodes may be out of service, so they can be stale for too long.
+	CheckInterval config.Duration `toml:"check_interval"`
+	// RunInterval: the check runs if the previous operation was done at least RunInterval before.
+	RunInterval config.Duration `toml:"run_interval"`
+	// LivenessInterval: an update runs on the locked entity with provided period to signal that entity is in use.
+	LivenessInterval config.Duration `toml:"liveness_interval"`
+	// RepositoriesInBatch is the number of repositories to pass as a batch for processing.
+	RepositoriesInBatch int `toml:"repositories_in_batch"`
+}
+
+// DefaultSyncConfig contains default configuration values for the Sync.
+func DefaultSyncConfig() Sync {
+	return Sync{
+		CheckInterval:       config.Duration(30 * time.Minute),
+		RunInterval:         config.Duration(24 * time.Hour),
+		LivenessInterval:    config.Duration(30 * time.Second),
+		RepositoriesInBatch: 16,
+	}
 }

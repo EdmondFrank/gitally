@@ -11,3 +11,9 @@ election_strategy = "local"
 read_only_after_failover = false
 bootstrap_interval = "5s"
 monitor_interval = "10s"
+
+[sync]
+check_interval = "1s"
+run_interval = "4s"
+liveness_interval = "3s"
+repositories_in_batch = 11
