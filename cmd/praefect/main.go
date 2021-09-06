@@ -85,6 +85,7 @@ import (
 	"gitlab.com/gitlab-org/gitaly/v14/internal/praefect/protoregistry"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/praefect/reconciler"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/praefect/service/transaction"
+	"gitlab.com/gitlab-org/gitaly/v14/internal/praefect/syncer"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/praefect/transactions"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/version"
 	"gitlab.com/gitlab-org/labkit/monitoring"
@@ -439,6 +440,22 @@ func run(cfgs []starter.Config, conf config.Config) error {
 			)
 			prometheus.MustRegister(r)
 			go r.Run(ctx, helper.NewTimerTicker(interval))
+		}
+	}
+
+	if interval := conf.Sync.RunInterval.Duration(); interval > 0 {
+		if db != nil {
+			go func() {
+				storageSync := datastore.NewStorageCleanup(db)
+				repoExistence := syncer.NewRepositoryExistence(conf, logger, healthChecker, nodeSet.Connections(), storageSync, storageSync, syncer.NewLogWarnAction(logger))
+				if err := repoExistence.Run(ctx, helper.NewTimerTicker(conf.Sync.CheckInterval.Duration())); err != nil && !errors.Is(context.Canceled, err) {
+					logger.WithError(err).Error("repository syncer finished execution")
+				} else {
+					logger.Info("repository syncer finished execution")
+				}
+			}()
+		} else {
+			logger.Warn("Repository sync background task disabled as there is no database connection configured.")
 		}
 	}
 
