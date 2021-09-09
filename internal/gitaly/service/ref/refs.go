@@ -100,16 +100,18 @@ func (s *server) FindAllTags(in *gitalypb.FindAllTagsRequest, stream gitalypb.Re
 		return helper.ErrInvalidArgument(err)
 	}
 
+	opts := paginationParamsToOpts(in.GetPaginationParams())
+
 	repo := s.localrepo(in.GetRepository())
 
-	if err := s.findAllTags(ctx, repo, sortField, stream); err != nil {
+	if err := s.findAllTags(ctx, repo, sortField, stream, opts); err != nil {
 		return helper.ErrInternal(err)
 	}
 
 	return nil
 }
 
-func (s *server) findAllTags(ctx context.Context, repo *localrepo.Repo, sortField string, stream gitalypb.RefService_FindAllTagsServer) error {
+func (s *server) findAllTags(ctx context.Context, repo *localrepo.Repo, sortField string, stream gitalypb.RefService_FindAllTagsServer, opts *findRefsOpts) error {
 	c, err := s.catfileCache.BatchProcess(ctx, repo)
 	if err != nil {
 		return fmt.Errorf("error creating catfile: %v", err)
@@ -179,9 +181,16 @@ func (s *server) findAllTags(ctx context.Context, repo *localrepo.Repo, sortFiel
 
 	chunker := chunk.New(&tagSender{stream: stream})
 
+	pastPageToken := opts.IsPageToken([]byte{})
+	limit := opts.Limit
+	i := 0
+
 	for catfileObjectsIter.Next() {
 		tag := catfileObjectsIter.Result()
 
+		if i >= limit {
+			break
+		}
 		var result *gitalypb.Tag
 		switch tag.ObjectInfo.Type {
 		case "tag":
@@ -240,9 +249,16 @@ func (s *server) findAllTags(ctx context.Context, repo *localrepo.Repo, sortFiel
 			result.Name = tagName
 		}
 
+		if !pastPageToken {
+			pastPageToken = opts.IsPageToken(tag.ObjectName)
+			continue
+		}
+
 		if err := chunker.Send(result); err != nil {
 			return fmt.Errorf("sending tag: %w", err)
 		}
+
+		i++
 	}
 
 	if err := catfileObjectsIter.Err(); err != nil {

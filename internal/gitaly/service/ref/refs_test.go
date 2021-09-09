@@ -1013,6 +1013,94 @@ func TestFindAllTagsSorted(t *testing.T) {
 	})
 }
 
+func TestFindAllTagsPagination(t *testing.T) {
+	cfg, client := setupRefServiceWithoutRepo(t)
+
+	ctx, cancel := testhelper.Context()
+	defer cancel()
+
+	repoProto, _ := gittest.CloneRepo(t, cfg, cfg.Storages[0])
+
+	repo := localrepo.New(git.NewExecCommandFactory(cfg), catfile.NewCache(cfg), repoProto, cfg)
+	headCommit, err := repo.ReadCommit(ctx, "HEAD")
+	require.NoError(t, err)
+	annotatedTagID, err := repo.WriteTag(ctx, git.ObjectID(headCommit.Id), "commit", []byte("annotated"), []byte("message"), gittest.TestUser, time.Now())
+	require.NoError(t, err)
+	require.NoError(t, repo.UpdateRef(ctx, "refs/tags/annotated", annotatedTagID, git.ZeroOID))
+
+	require.NoError(t, repo.ExecAndWait(ctx, git.SubCmd{
+		Name: "tag",
+		Args: []string{"not-annotated", headCommit.Id},
+	}, git.WithDisabledHooks()))
+
+	for _, tc := range []struct {
+		desc             string
+		paginationParams *gitalypb.PaginationParameter
+		exp              []string
+	}{
+		{
+			desc:             "without pagination",
+			paginationParams: &gitalypb.PaginationParameter{Limit: 100},
+			exp: []string{
+				annotatedTagID.String(),
+				headCommit.Id,
+				"f4e6814c3e4e7a0de82a9e7cd20c626cc963a2f8",
+				"8a2a6eb295bb170b34c24c76c49ed0e9b2eaf34b",
+				"8f03acbcd11c53d9c9468078f32a2622005a4841",
+			},
+		},
+		{
+			desc:             "with limit restrictions",
+			paginationParams: &gitalypb.PaginationParameter{Limit: 3},
+			exp: []string{
+				annotatedTagID.String(),
+				headCommit.Id,
+				"f4e6814c3e4e7a0de82a9e7cd20c626cc963a2f8",
+			},
+		},
+		{
+			desc:             "with limit restrictions and page token",
+			paginationParams: &gitalypb.PaginationParameter{Limit: 3, PageToken: "refs/tags/v1.0.0"},
+			exp: []string{
+				"8a2a6eb295bb170b34c24c76c49ed0e9b2eaf34b",
+				"8f03acbcd11c53d9c9468078f32a2622005a4841",
+			},
+		},
+		{
+			desc:             "with page token only",
+			paginationParams: &gitalypb.PaginationParameter{PageToken: "refs/tags/v1.1.0"},
+			exp:              nil,
+		},
+		{
+			desc:             "with invalid page token",
+			paginationParams: &gitalypb.PaginationParameter{Limit: 3, PageToken: "refs/tags/invalid"},
+			exp:              nil,
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			c, err := client.FindAllTags(ctx, &gitalypb.FindAllTagsRequest{
+				Repository:       repoProto,
+				PaginationParams: tc.paginationParams,
+			})
+			require.NoError(t, err)
+
+			var tags []string
+			for {
+				r, err := c.Recv()
+				if err == io.EOF {
+					break
+				}
+				require.NoError(t, err)
+				for _, tag := range r.GetTags() {
+					tags = append(tags, tag.Id)
+				}
+			}
+
+			require.Equal(t, tc.exp, tags)
+		})
+	}
+}
+
 func TestSuccessfulFindLocalBranches(t *testing.T) {
 	_, repo, _, client := setupRefService(t)
 
