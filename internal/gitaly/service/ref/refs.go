@@ -608,7 +608,14 @@ func paginationParamsToOpts(p *gitalypb.PaginationParameter) *findRefsOpts {
 	}
 
 	if p.GetPageToken() != "" {
-		opts.IsPageToken = func(l []byte) bool { return bytes.Compare(l, []byte(p.GetPageToken())) >= 0 }
+		opts.IsPageToken = func(line []byte) bool {
+			// Only use the first part of the line before \x00 separator
+			if nullByteIndex := bytes.IndexByte(line, 0); nullByteIndex != -1 {
+				line = line[:nullByteIndex]
+			}
+
+			return bytes.Equal(line, []byte(p.GetPageToken()))
+		}
 	}
 
 	return opts
