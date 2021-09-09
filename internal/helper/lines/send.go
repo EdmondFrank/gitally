@@ -118,7 +118,14 @@ func (w *writer) consume(r io.Reader) error {
 		// If a page token is given, we need to skip all lines until we've found it.
 		// All remaining lines will then be sent until we reach the pagination limit.
 		if !pastPageToken {
-			pastPageToken = w.options.IsPageToken(line)
+			branchName := line
+
+			// Line consists of branch name, null byte, commit hash
+			if nullByteIndex := bytes.IndexByte(branchName, 0); nullByteIndex != -1 {
+				branchName = branchName[:nullByteIndex]
+			}
+
+			pastPageToken = w.options.IsPageToken(branchName)
 			continue
 		}
 

@@ -608,7 +608,7 @@ func paginationParamsToOpts(p *gitalypb.PaginationParameter) *findRefsOpts {
 	}
 
 	if p.GetPageToken() != "" {
-		opts.IsPageToken = func(l []byte) bool { return bytes.Compare(l, []byte(p.GetPageToken())) >= 0 }
+		opts.IsPageToken = func(l []byte) bool { return bytes.Equal(l, []byte(p.GetPageToken())) }
 	}
 
 	return opts

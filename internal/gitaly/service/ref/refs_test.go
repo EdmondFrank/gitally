@@ -1131,6 +1131,36 @@ func TestFindLocalBranchesPagination(t *testing.T) {
 	assertContainsLocalBranch(t, branches, branch)
 }
 
+func TestFindLocalBranchesPaginationWithIncorrectToken(t *testing.T) {
+	_, repo, _, client := setupRefService(t)
+
+	ctx, cancel := testhelper.Context()
+	defer cancel()
+
+	limit := 1
+	rpcRequest := &gitalypb.FindLocalBranchesRequest{
+		Repository: repo,
+		PaginationParams: &gitalypb.PaginationParameter{
+			Limit:     int32(limit),
+			PageToken: "random-unknown-branch",
+		},
+	}
+	c, err := client.FindLocalBranches(ctx, rpcRequest)
+	require.NoError(t, err)
+
+	var branches []*gitalypb.FindLocalBranchResponse
+	for {
+		r, err := c.Recv()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		branches = append(branches, r.GetBranches()...)
+	}
+
+	require.Len(t, branches, 0)
+}
+
 // Test that `s` contains the elements in `relativeOrder` in that order
 // (relative to each other)
 func isOrderedSubset(subset, set []string) bool {
