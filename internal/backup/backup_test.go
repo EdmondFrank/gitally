@@ -151,6 +151,15 @@ func TestManager_Restore(t *testing.T) {
 	missingBundleRepo := gittest.InitRepoDir(t, cfg.Storages[0].Path, "missing_bundle")
 	missingBundleRepoAlwaysCreate := gittest.InitRepoDir(t, cfg.Storages[0].Path, "missing_bundle_always_create")
 
+	nonexistentRepo := &gitalypb.Repository{
+		StorageName:   cfg.Storages[0].Name,
+		RelativePath:  "nonexistent",
+		GlRepository:  gittest.GlRepository,
+		GlProjectPath: gittest.GlProjectPath,
+	}
+	nonexistentRepoBundlePath := filepath.Join(path, nonexistentRepo.RelativePath+".bundle")
+	testhelper.CopyFile(t, existingRepoBundlePath, nonexistentRepoBundlePath)
+
 	for _, tc := range []struct {
 		desc          string
 		repo          *gitalypb.Repository
@@ -183,6 +192,11 @@ func TestManager_Restore(t *testing.T) {
 			desc:         "missing bundle, always create",
 			repo:         missingBundleRepoAlwaysCreate,
 			alwaysCreate: true,
+		},
+		{
+			desc:         "nonexistent repo",
+			repo:         nonexistentRepo,
+			expectVerify: true,
 		},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
