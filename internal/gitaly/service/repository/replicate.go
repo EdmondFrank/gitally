@@ -300,7 +300,7 @@ func writeFile(path string, mode os.FileMode, reader io.Reader) error {
 
 // newRepoClient creates a new RepositoryClient that talks to the gitaly of the source repository
 func (s *server) newRepoClient(ctx context.Context, storageName string) (gitalypb.RepositoryServiceClient, error) {
-	gitalyServerInfo, err := helper.ExtractGitalyServer(ctx, storageName)
+	gitalyServerInfo, err := storage.ExtractGitalyServer(ctx, storageName)
 	if err != nil {
 		return nil, err
 	}
