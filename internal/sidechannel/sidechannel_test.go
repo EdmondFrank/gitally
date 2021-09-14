@@ -48,7 +48,7 @@ func TestSidechannel(t *testing.T) {
 	conn, registry := dial(t, addr)
 	err = call(
 		context.Background(), conn, registry,
-		func(conn net.Conn) error {
+		func(conn *ClientConn) error {
 			errC := make(chan error, 1)
 			go func() {
 				var err error
@@ -114,7 +114,7 @@ func TestSidechannelConcurrency(t *testing.T) {
 
 			err := call(
 				context.Background(), conn, registry,
-				func(conn net.Conn) error {
+				func(conn *ClientConn) error {
 					errC := make(chan error, 1)
 					go func() {
 						var err error
@@ -188,7 +188,7 @@ func dial(t *testing.T, addr string) (*grpc.ClientConn, *Registry) {
 	return conn, registry
 }
 
-func call(ctx context.Context, conn *grpc.ClientConn, registry *Registry, handler func(net.Conn) error) error {
+func call(ctx context.Context, conn *grpc.ClientConn, registry *Registry, handler func(*ClientConn) error) error {
 	client := healthpb.NewHealthClient(conn)
 
 	ctxOut, waiter := RegisterSidechannel(ctx, registry, handler)
