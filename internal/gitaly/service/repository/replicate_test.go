@@ -13,8 +13,8 @@ import (
 	"gitlab.com/gitlab-org/gitaly/v14/internal/git/gittest"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/gitaly/config"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/gitaly/service"
-	"gitlab.com/gitlab-org/gitaly/v14/internal/helper"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/helper/text"
+	"gitlab.com/gitlab-org/gitaly/v14/internal/metadata"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/testhelper"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/testhelper/testcfg"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/testhelper/testserver"
@@ -22,7 +22,7 @@ import (
 	"gitlab.com/gitlab-org/gitaly/v14/proto/go/gitalypb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
+	grpc_metadata "google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -62,7 +62,7 @@ func TestReplicateRepository(t *testing.T) {
 	ctx, cancel := testhelper.Context()
 	defer cancel()
 	md := testhelper.GitalyServersMetadataFromCfg(t, cfg)
-	injectedCtx := metadata.NewOutgoingContext(ctx, md)
+	injectedCtx := grpc_metadata.NewOutgoingContext(ctx, md)
 
 	_, err = client.ReplicateRepository(injectedCtx, &gitalypb.ReplicateRepositoryRequest{
 		Repository: targetRepo,
@@ -126,7 +126,7 @@ func TestReplicateRepositoryTransactional(t *testing.T) {
 	defer cancel()
 	ctx, err := txinfo.InjectTransaction(ctx, 1, "primary", true)
 	require.NoError(t, err)
-	ctx = helper.IncomingToOutgoing(ctx)
+	ctx = metadata.IncomingToOutgoing(ctx)
 	ctx = testhelper.MergeOutgoingMetadata(ctx, testhelper.GitalyServersMetadataFromCfg(t, cfg))
 
 	client := newMuxedRepositoryClient(t, ctx, cfg, serverSocketPath, backchannel.NewClientHandshaker(
@@ -319,7 +319,7 @@ func TestReplicateRepository_BadRepository(t *testing.T) {
 			defer cancel()
 
 			md := testhelper.GitalyServersMetadataFromCfg(t, cfg)
-			injectedCtx := metadata.NewOutgoingContext(ctx, md)
+			injectedCtx := grpc_metadata.NewOutgoingContext(ctx, md)
 
 			_, err := client.ReplicateRepository(injectedCtx, &gitalypb.ReplicateRepositoryRequest{
 				Repository: targetRepo,
@@ -362,7 +362,7 @@ func TestReplicateRepository_FailedFetchInternalRemote(t *testing.T) {
 	defer cancel()
 
 	md := testhelper.GitalyServersMetadataFromCfg(t, cfg)
-	injectedCtx := metadata.NewOutgoingContext(ctx, md)
+	injectedCtx := grpc_metadata.NewOutgoingContext(ctx, md)
 
 	_, err = repoClient.ReplicateRepository(injectedCtx, &gitalypb.ReplicateRepositoryRequest{
 		Repository: targetRepo,
