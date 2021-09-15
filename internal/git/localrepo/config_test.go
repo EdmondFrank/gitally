@@ -221,102 +221,6 @@ func TestBuildConfigUnsetOptsFlags(t *testing.T) {
 	}
 }
 
-func TestConfig_UnsetAll(t *testing.T) {
-	configContains := func(t *testing.T, repoPath string) func(t *testing.T, val string, contains bool) {
-		data := testhelper.MustReadFile(t, filepath.Join(repoPath, "config"))
-		require.Contains(t, string(data), "[core]", "config should have core section defined by default")
-		return func(t *testing.T, val string, contains bool) {
-			require.Equal(t, contains, strings.Contains(string(data), val))
-		}
-	}
-
-	ctx, cancel := testhelper.Context()
-	defer cancel()
-
-	repoConfig, repoPath := setupRepoConfig(t)
-
-	t.Run("unset single value", func(t *testing.T) {
-		gittest.Exec(t, repoConfig.repo.cfg, "-C", repoPath, "config", "--add", "key.one", "key-one")
-
-		require.NoError(t, repoConfig.Unset(ctx, "key.one", git.ConfigUnsetOpts{}))
-
-		contains := configContains(t, repoPath)
-		contains(t, "key-one", false)
-	})
-
-	t.Run("unset multiple values", func(t *testing.T) {
-		gittest.Exec(t, repoConfig.repo.cfg, "-C", repoPath, "config", "--add", "key.two", "key-two-1")
-		gittest.Exec(t, repoConfig.repo.cfg, "-C", repoPath, "config", "--add", "key.two", "key-two-2")
-
-		require.NoError(t, repoConfig.Unset(ctx, "key.two", git.ConfigUnsetOpts{All: true}))
-
-		contains := configContains(t, repoPath)
-		contains(t, "key-two-1", false)
-		contains(t, "key-two-2", false)
-	})
-
-	t.Run("unset single with multiple values", func(t *testing.T) {
-		gittest.Exec(t, repoConfig.repo.cfg, "-C", repoPath, "config", "--add", "key.two", "key-two-1")
-		gittest.Exec(t, repoConfig.repo.cfg, "-C", repoPath, "config", "--add", "key.two", "key-two-2")
-
-		err := repoConfig.Unset(ctx, "key.two", git.ConfigUnsetOpts{})
-		require.Equal(t, git.ErrNotFound, err)
-
-		contains := configContains(t, repoPath)
-		contains(t, "key-two-1", true)
-		contains(t, "key-two-2", true)
-	})
-
-	t.Run("config key doesn't exist - is strict (by default)", func(t *testing.T) {
-		gittest.Exec(t, repoConfig.repo.cfg, "-C", repoPath, "config", "--add", "key.three", "key-three")
-
-		err := repoConfig.Unset(ctx, "some.stub", git.ConfigUnsetOpts{})
-		require.Equal(t, git.ErrNotFound, err)
-
-		contains := configContains(t, repoPath)
-		contains(t, "key-three", true)
-	})
-
-	t.Run("config key doesn't exist - not strict", func(t *testing.T) {
-		gittest.Exec(t, repoConfig.repo.cfg, "-C", repoPath, "config", "--add", "key.four", "key-four")
-
-		require.NoError(t, repoConfig.Unset(ctx, "some.stub", git.ConfigUnsetOpts{NotStrict: true}))
-
-		contains := configContains(t, repoPath)
-		contains(t, "key-four", true)
-	})
-
-	t.Run("invalid argument", func(t *testing.T) {
-		for _, tc := range []struct {
-			desc   string
-			name   string
-			expErr error
-		}{
-			{
-				desc:   "empty name",
-				name:   "",
-				expErr: git.ErrInvalidArg,
-			},
-			{
-				desc:   "invalid name",
-				name:   "`.\n",
-				expErr: git.ErrInvalidArg,
-			},
-			{
-				desc:   "no section or name",
-				name:   "bad",
-				expErr: git.ErrInvalidArg,
-			},
-		} {
-			t.Run(tc.desc, func(t *testing.T) {
-				err := repoConfig.Unset(ctx, tc.name, git.ConfigUnsetOpts{})
-				require.Error(t, err)
-				require.True(t, errors.Is(err, tc.expErr), err.Error())
-			})
-		}
-	})
-}
-
 func TestRepo_SetConfig(t *testing.T) {
 	ctx, cancel := testhelper.Context()
 	defer cancel()
@@ -420,6 +324,137 @@ func TestRepo_SetConfig(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NoError(t, repo.SetConfig(ctx, "some.key", "value", &transaction.MockManager{
+			VoteFn: func(context.Context, txinfo.Transaction, voting.Vote) error {
+				votes++
+				return nil
+			},
+		}))
+
+		require.Equal(t, 2, votes)
+	})
+}
+
+func TestRepo_UnsetMatchingConfig(t *testing.T) {
+	ctx, cancel := testhelper.Context()
+	defer cancel()
+
+	cfg := testcfg.Build(t)
+
+	standardKeys := []string{
+		"core.repositoryformatversion",
+		"core.filemode",
+		"core.bare",
+	}
+
+	for _, tc := range []struct {
+		desc         string
+		addEntries   map[string]string
+		regex        string
+		locked       bool
+		expectedErr  error
+		expectedKeys []string
+	}{
+		{
+			desc:         "empty regex is refused",
+			regex:        "",
+			expectedErr:  fmt.Errorf("%w: \"regex\" is blank or empty", git.ErrInvalidArg),
+			expectedKeys: standardKeys,
+		},
+		{
+			desc: "simple match",
+			addEntries: map[string]string{
+				"foo.bar": "value1",
+				"foo.qux": "value2",
+			},
+			regex:        "foo.bar",
+			expectedKeys: append(standardKeys, "foo.qux"),
+		},
+		{
+			desc: "multiple matches",
+			addEntries: map[string]string{
+				"foo.bar": "value1",
+				"foo.qux": "value2",
+			},
+			regex:        "foo.",
+			expectedKeys: standardKeys,
+		},
+		{
+			desc: "unanchored",
+			addEntries: map[string]string{
+				"foo.matchme": "value1",
+				"foo.qux":     "value2",
+			},
+			regex:        "matchme",
+			expectedKeys: append(standardKeys, "foo.qux"),
+		},
+		{
+			desc: "anchored",
+			addEntries: map[string]string{
+				"foo.matchme": "value1",
+				"matchme.foo": "value2",
+			},
+			regex:        "^matchme",
+			expectedKeys: append(standardKeys, "foo.matchme"),
+		},
+		{
+			desc:         "no matches",
+			regex:        "idontmatch",
+			expectedErr:  fmt.Errorf("%w: no matching keys", git.ErrNotFound),
+			expectedKeys: standardKeys,
+		},
+		{
+			desc:         "invalid regex",
+			regex:        "?",
+			expectedErr:  fmt.Errorf("%w: invalid regular expression", git.ErrInvalidArg),
+			expectedKeys: standardKeys,
+		},
+		{
+			desc:         "locked",
+			regex:        ".*",
+			locked:       true,
+			expectedErr:  fmt.Errorf("committing config: %w", fmt.Errorf("locking file: %w", errors.New("file already locked"))),
+			expectedKeys: standardKeys,
+		},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			repoProto, repoPath := gittest.InitRepo(t, cfg, cfg.Storages[0])
+			repo := NewTestRepo(t, cfg, repoProto)
+
+			for key, value := range tc.addEntries {
+				gittest.Exec(t, cfg, "-C", repoPath, "config", "--add", key, value)
+			}
+
+			if tc.locked {
+				writer, err := safe.NewLockingFileWriter(filepath.Join(repoPath, "config"))
+				require.NoError(t, err)
+				defer writer.Close()
+				require.NoError(t, writer.Lock())
+			}
+
+			require.Equal(t, tc.expectedErr, repo.UnsetMatchingConfig(ctx, tc.regex, &transaction.MockManager{}))
+
+			output := gittest.Exec(t, cfg, "-C", repoPath, "config", "--list", "--name-only", "--local")
+			require.Equal(t, tc.expectedKeys, strings.Split(text.ChompBytes(output), "\n"))
+		})
+	}
+
+	t.Run("transactional", func(t *testing.T) {
+		repoProto, repoPath := gittest.InitRepo(t, cfg, cfg.Storages[0])
+		repo := NewTestRepo(t, cfg, repoProto)
+
+		gittest.Exec(t, cfg, "-C", repoPath, "config", "--add", "some.key", "value")
+
+		backchannelPeer := &peer.Peer{
+			AuthInfo: backchannel.WithID(nil, 1234),
+		}
+
+		ctx, err := txinfo.InjectTransaction(ctx, 1, "node", true)
+		ctx = peer.NewContext(ctx, backchannelPeer)
+
+		votes := 0
+
+		require.NoError(t, err)
+		require.NoError(t, repo.UnsetMatchingConfig(ctx, "some.key", &transaction.MockManager{
 			VoteFn: func(context.Context, txinfo.Transaction, voting.Vote) error {
 				votes++
 				return nil
