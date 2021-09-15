@@ -13,7 +13,7 @@ import (
 
 func TestRegistry(t *testing.T) {
 	const N = 10
-	registry := NewRegistry()
+	registry := NewRegistry(newLogger())
 
 	t.Run("waiter removed from the registry right after connection received", func(t *testing.T) {
 		triggerCallback := make(chan struct{})
