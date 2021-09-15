@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net"
 	"sync"
+
+	"github.com/sirupsen/logrus"
 )
 
 // sidechannelID is the type of ID used to differeniate sidechannel connections
@@ -16,6 +18,7 @@ type Registry struct {
 	nextID  sidechannelID
 	waiters map[sidechannelID]*Waiter
 	mu      sync.Mutex
+	logger  *logrus.Entry
 }
 
 // Waiter lets the caller waits until a connection with matched id is pushed
@@ -29,9 +32,10 @@ type Waiter struct {
 }
 
 // NewRegistry returns a new Registry instance
-func NewRegistry() *Registry {
+func NewRegistry(logger *logrus.Entry) *Registry {
 	return &Registry{
 		waiters: make(map[sidechannelID]*Waiter),
+		logger:  logger,
 	}
 }
 

@@ -10,7 +10,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/backchannel"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/listenmux"
@@ -146,10 +145,8 @@ func TestSidechannelConcurrency(t *testing.T) {
 func startServer(t *testing.T, th testHandler, opts ...grpc.ServerOption) string {
 	t.Helper()
 
-	logger := logrus.NewEntry(logrus.New())
-
 	lm := listenmux.New(insecure.NewCredentials())
-	lm.Register(backchannel.NewServerHandshaker(logger, backchannel.NewRegistry(), nil))
+	lm.Register(backchannel.NewServerHandshaker(newLogger(), backchannel.NewRegistry(), nil))
 
 	opts = append(opts, grpc.Creds(lm))
 
@@ -169,9 +166,8 @@ func startServer(t *testing.T, th testHandler, opts ...grpc.ServerOption) string
 }
 
 func dial(t *testing.T, addr string) (*grpc.ClientConn, *Registry) {
-	registry := NewRegistry()
-	logger := logrus.NewEntry(logrus.New())
-
+	logger := newLogger()
+	registry := NewRegistry(logger)
 	factory := func() backchannel.Server {
 		lm := listenmux.New(insecure.NewCredentials())
 		lm.Register(NewServerHandshaker(registry))
