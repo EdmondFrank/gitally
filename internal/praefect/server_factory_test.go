@@ -4,6 +4,9 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"testing"
@@ -11,17 +14,22 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"gitlab.com/gitlab-org/gitaly/v14/client"
+	"gitlab.com/gitlab-org/gitaly/v14/internal/backchannel"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/bootstrap/starter"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/git/gittest"
 	gconfig "gitlab.com/gitlab-org/gitaly/v14/internal/gitaly/config"
+	"gitlab.com/gitlab-org/gitaly/v14/internal/gitaly/service"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/gitaly/service/setup"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/helper/text"
+	"gitlab.com/gitlab-org/gitaly/v14/internal/listenmux"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/praefect/config"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/praefect/datastore"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/praefect/datastore/glsql"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/praefect/nodes"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/praefect/protoregistry"
+	"gitlab.com/gitlab-org/gitaly/v14/internal/praefect/service/transaction"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/praefect/transactions"
+	"gitlab.com/gitlab-org/gitaly/v14/internal/sidechannel"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/testhelper"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/testhelper/promtest"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/testhelper/testcfg"
@@ -29,13 +37,18 @@ import (
 	"gitlab.com/gitlab-org/gitaly/v14/proto/go/gitalypb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 func TestServerFactory(t *testing.T) {
 	t.Parallel()
 	cfg, repo, repoPath := testcfg.BuildWithRepo(t)
-	gitalyAddr := testserver.RunGitalyServer(t, cfg, nil, setup.RegisterAll, testserver.WithDisablePraefect())
+	register := func(srv *grpc.Server, deps *service.Dependencies) {
+		setup.RegisterAll(srv, deps)
+		gitalypb.RegisterTestServiceServer(srv, &testSidechannelService{})
+	}
+	gitalyAddr := testserver.RunGitalyServer(t, cfg, nil, register, testserver.WithDisablePraefect())
 
 	certFile, keyFile := testhelper.GenerateCerts(t)
 
@@ -66,10 +79,12 @@ func TestServerFactory(t *testing.T) {
 	queue := datastore.NewPostgresReplicationEventQueue(glsql.NewDB(t))
 
 	rs := datastore.MockRepositoryStore{}
-	nodeMgr, err := nodes.NewManager(logger, conf, nil, rs, &promtest.MockHistogramVec{}, protoregistry.GitalyProtoPreregistered, nil, nil)
+	txMgr := transactions.NewManager(conf)
+	sidechannelRegistry := sidechannel.NewRegistry(logger)
+	clientHandshaker := backchannel.NewClientHandshaker(logger, NewBackchannelServerFactory(logger, transaction.NewServer(txMgr), sidechannelRegistry))
+	nodeMgr, err := nodes.NewManager(logger, conf, nil, rs, &promtest.MockHistogramVec{}, protoregistry.GitalyProtoPreregistered, nil, clientHandshaker, sidechannelRegistry)
 	require.NoError(t, err)
 	nodeMgr.Start(0, time.Second)
-	txMgr := transactions.NewManager(conf)
 	registry := protoregistry.GitalyProtoPreregistered
 
 	coordinator := NewCoordinator(
@@ -103,6 +118,47 @@ func TestServerFactory(t *testing.T) {
 		require.Equal(t, revision, resp.Commit.Id)
 	}
 
+	checkSidechannelGitaly := func(ctx context.Context, t *testing.T, addr string, creds credentials.TransportCredentials) {
+		t.Helper()
+		factory := func() backchannel.Server {
+			lm := listenmux.New(insecure.NewCredentials())
+			lm.Register(sidechannel.NewServerHandshaker(sidechannelRegistry))
+			return grpc.NewServer(grpc.Creds(lm))
+		}
+
+		clientHandshaker := backchannel.NewClientHandshaker(logger, factory)
+		dialOpt := grpc.WithTransportCredentials(clientHandshaker.ClientHandshake(creds))
+
+		conn, err := grpc.Dial(addr, dialOpt)
+		require.NoError(t, err)
+		t.Cleanup(func() { conn.Close() })
+
+		ctx, waiter := sidechannel.RegisterSidechannel(ctx, sidechannelRegistry, func(conn net.Conn) error {
+			const message = "hello world01234"
+			if len(message) != sidechannelTestMessageSize {
+				return errors.New("test setup error: incorrect message size")
+			}
+			if _, err := io.WriteString(conn, message); err != nil {
+				return err
+			}
+			buf := make([]byte, len(message))
+			if _, err := io.ReadFull(conn, buf); err != nil {
+				return err
+			}
+			if string(buf) != message {
+				return fmt.Errorf("unexpected response: %q", buf)
+			}
+			return nil
+		})
+		defer waiter.Close()
+
+		_, err = gitalypb.NewTestServiceClient(conn).TestSidechannel(ctx,
+			&gitalypb.TestSidechannelRequest{Repository: repo},
+		)
+		require.NoError(t, err)
+		require.NoError(t, waiter.Wait())
+	}
+
 	t.Run("insecure", func(t *testing.T) {
 		praefectServerFactory := NewServerFactory(conf, logger, coordinator.StreamDirector, nodeMgr, txMgr, queue, rs, datastore.AssignmentStore{}, registry, nil, nil)
 		defer praefectServerFactory.Stop()
@@ -115,6 +171,8 @@ func TestServerFactory(t *testing.T) {
 
 		praefectAddr, err := starter.ComposeEndpoint(listener.Addr().Network(), listener.Addr().String())
 		require.NoError(t, err)
+
+		creds := insecure.NewCredentials()
 
 		cc, err := client.Dial(praefectAddr, nil)
 		require.NoError(t, err)
@@ -129,6 +187,10 @@ func TestServerFactory(t *testing.T) {
 
 		t.Run("proxies RPCs onto gitaly server", func(t *testing.T) {
 			checkProxyingOntoGitaly(ctx, t, cc)
+		})
+
+		t.Run("proxies sidechannel RPCs onto gitaly server", func(t *testing.T) {
+			checkSidechannelGitaly(ctx, t, listener.Addr().String(), creds)
 		})
 	})
 
@@ -167,6 +229,10 @@ func TestServerFactory(t *testing.T) {
 
 		t.Run("proxies RPCs onto gitaly server", func(t *testing.T) {
 			checkProxyingOntoGitaly(ctx, t, cc)
+		})
+
+		t.Run("proxies sidechannel RPCs onto gitaly server", func(t *testing.T) {
+			checkSidechannelGitaly(ctx, t, listener.Addr().String(), creds)
 		})
 	})
 
@@ -256,4 +322,24 @@ func TestServerFactory(t *testing.T) {
 		err := praefectServerFactory.Serve(nil, true)
 		require.EqualError(t, err, "load certificate key pair: open invalid: no such file or directory")
 	})
+}
+
+const sidechannelTestMessageSize = 16
+
+type testSidechannelService struct {
+	gitalypb.UnimplementedTestServiceServer
+}
+
+func (testSidechannelService) TestSidechannel(ctx context.Context, _ *gitalypb.TestSidechannelRequest) (*gitalypb.TestSidechannelResponse, error) {
+	conn, err := sidechannel.OpenSidechannel(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("upstream handler: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := io.CopyN(conn, conn, sidechannelTestMessageSize); err != nil {
+		return nil, fmt.Errorf("upstream handler: %w", err)
+	}
+
+	return &gitalypb.TestSidechannelResponse{}, nil
 }

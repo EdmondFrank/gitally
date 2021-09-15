@@ -173,7 +173,7 @@ func TestStreamDirectorMutator(t *testing.T) {
 
 	txMgr := transactions.NewManager(conf)
 
-	nodeSet, err := DialNodes(ctx, conf.VirtualStorages, protoregistry.GitalyProtoPreregistered, nil, nil)
+	nodeSet, err := DialNodes(ctx, conf.VirtualStorages, protoregistry.GitalyProtoPreregistered, nil, nil, nil)
 	require.NoError(t, err)
 	defer nodeSet.Close()
 
@@ -304,7 +304,7 @@ func TestStreamDirectorMutator_StopTransaction(t *testing.T) {
 		RelativePath: "/path/to/hashed/storage",
 	}
 
-	nodeMgr, err := nodes.NewManager(testhelper.DiscardTestEntry(t), conf, nil, nil, promtest.NewMockHistogramVec(), protoregistry.GitalyProtoPreregistered, nil, nil)
+	nodeMgr, err := nodes.NewManager(testhelper.DiscardTestEntry(t), conf, nil, nil, promtest.NewMockHistogramVec(), protoregistry.GitalyProtoPreregistered, nil, nil, nil)
 	require.NoError(t, err)
 	nodeMgr.Start(0, time.Hour)
 
@@ -435,7 +435,7 @@ func TestStreamDirectorAccessor(t *testing.T) {
 	entry := testhelper.DiscardTestEntry(t)
 	rs := datastore.MockRepositoryStore{}
 
-	nodeMgr, err := nodes.NewManager(entry, conf, nil, rs, promtest.NewMockHistogramVec(), protoregistry.GitalyProtoPreregistered, nil, nil)
+	nodeMgr, err := nodes.NewManager(entry, conf, nil, rs, promtest.NewMockHistogramVec(), protoregistry.GitalyProtoPreregistered, nil, nil, nil)
 	require.NoError(t, err)
 	nodeMgr.Start(0, time.Minute)
 
@@ -546,7 +546,7 @@ func TestCoordinatorStreamDirector_distributesReads(t *testing.T) {
 		},
 	}
 
-	nodeMgr, err := nodes.NewManager(entry, conf, nil, repoStore, promtest.NewMockHistogramVec(), protoregistry.GitalyProtoPreregistered, nil, nil)
+	nodeMgr, err := nodes.NewManager(entry, conf, nil, repoStore, promtest.NewMockHistogramVec(), protoregistry.GitalyProtoPreregistered, nil, nil, nil)
 	require.NoError(t, err)
 	nodeMgr.Start(0, time.Minute)
 
@@ -875,7 +875,7 @@ func TestStreamDirector_repo_creation(t *testing.T) {
 				healthySecondaryNode.Address = "unix://" + gitalySocket1
 				unhealthySecondaryNode.Address = "unix://" + gitalySocket2
 
-				nodeMgr, err := nodes.NewManager(testhelper.DiscardTestEntry(t), conf, nil, nil, promtest.NewMockHistogramVec(), protoregistry.GitalyProtoPreregistered, nil, nil)
+				nodeMgr, err := nodes.NewManager(testhelper.DiscardTestEntry(t), conf, nil, nil, promtest.NewMockHistogramVec(), protoregistry.GitalyProtoPreregistered, nil, nil, nil)
 				require.NoError(t, err)
 				nodeMgr.Start(0, time.Hour)
 
@@ -1078,7 +1078,7 @@ func TestAbsentCorrelationID(t *testing.T) {
 
 	entry := testhelper.DiscardTestEntry(t)
 
-	nodeMgr, err := nodes.NewManager(entry, conf, nil, nil, promtest.NewMockHistogramVec(), protoregistry.GitalyProtoPreregistered, nil, nil)
+	nodeMgr, err := nodes.NewManager(entry, conf, nil, nil, promtest.NewMockHistogramVec(), protoregistry.GitalyProtoPreregistered, nil, nil, nil)
 	require.NoError(t, err)
 	nodeMgr.Start(0, time.Hour)
 
@@ -1211,7 +1211,7 @@ func TestStreamDirectorStorageScope(t *testing.T) {
 
 	rs := datastore.MockRepositoryStore{}
 
-	nodeMgr, err := nodes.NewManager(testhelper.DiscardTestEntry(t), conf, nil, nil, promtest.NewMockHistogramVec(), protoregistry.GitalyProtoPreregistered, nil, nil)
+	nodeMgr, err := nodes.NewManager(testhelper.DiscardTestEntry(t), conf, nil, nil, promtest.NewMockHistogramVec(), protoregistry.GitalyProtoPreregistered, nil, nil, nil)
 	require.NoError(t, err)
 	nodeMgr.Start(0, time.Second)
 	coordinator := NewCoordinator(

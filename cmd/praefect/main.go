@@ -86,6 +86,7 @@ import (
 	"gitlab.com/gitlab-org/gitaly/v14/internal/praefect/reconciler"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/praefect/service/transaction"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/praefect/transactions"
+	"gitlab.com/gitlab-org/gitaly/v14/internal/sidechannel"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/version"
 	"gitlab.com/gitlab-org/labkit/monitoring"
 	"gitlab.com/gitlab-org/labkit/tracing"
@@ -276,7 +277,8 @@ func run(cfgs []starter.Config, conf config.Config) error {
 	}
 
 	transactionManager := transactions.NewManager(conf)
-	clientHandshaker := backchannel.NewClientHandshaker(logger, praefect.NewBackchannelServerFactory(logger, transaction.NewServer(transactionManager)))
+	sidechannelRegistry := sidechannel.NewRegistry(logger)
+	clientHandshaker := backchannel.NewClientHandshaker(logger, praefect.NewBackchannelServerFactory(logger, transaction.NewServer(transactionManager), sidechannelRegistry))
 	assignmentStore := praefect.NewDisabledAssignmentStore(conf.StorageNames())
 	var (
 		nodeManager   nodes.Manager
@@ -286,7 +288,7 @@ func run(cfgs []starter.Config, conf config.Config) error {
 		primaryGetter praefect.PrimaryGetter
 	)
 	if conf.Failover.ElectionStrategy == config.ElectionStrategyPerRepository {
-		nodeSet, err = praefect.DialNodes(ctx, conf.VirtualStorages, protoregistry.GitalyProtoPreregistered, errTracker, clientHandshaker)
+		nodeSet, err = praefect.DialNodes(ctx, conf.VirtualStorages, protoregistry.GitalyProtoPreregistered, errTracker, clientHandshaker, sidechannelRegistry)
 		if err != nil {
 			return fmt.Errorf("dial nodes: %w", err)
 		}
@@ -321,7 +323,7 @@ func run(cfgs []starter.Config, conf config.Config) error {
 				"Deprecated election stategy in use, migrate to repository specific primary nodes following https://docs.gitlab.com/ee/administration/gitaly/praefect.html#migrate-to-repository-specific-primary-gitaly-nodes. The other election strategies are scheduled for removal in GitLab 14.0.")
 		}
 
-		nodeMgr, err := nodes.NewManager(logger, conf, db, csg, nodeLatencyHistogram, protoregistry.GitalyProtoPreregistered, errTracker, clientHandshaker)
+		nodeMgr, err := nodes.NewManager(logger, conf, db, csg, nodeLatencyHistogram, protoregistry.GitalyProtoPreregistered, errTracker, clientHandshaker, sidechannelRegistry)
 		if err != nil {
 			return err
 		}
