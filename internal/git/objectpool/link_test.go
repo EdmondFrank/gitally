@@ -1,7 +1,6 @@
 package objectpool
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,7 +71,7 @@ func TestLinkRemoveBitmap(t *testing.T) {
 }
 
 func listBitmaps(t *testing.T, repoPath string) []string {
-	entries, err := ioutil.ReadDir(filepath.Join(repoPath, "objects/pack"))
+	entries, err := os.ReadDir(filepath.Join(repoPath, "objects/pack"))
 	require.NoError(t, err)
 
 	var bitmaps []string
