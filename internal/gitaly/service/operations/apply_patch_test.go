@@ -1,6 +1,7 @@
 package operations
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -10,18 +11,27 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gitlab.com/gitlab-org/gitaly/v14/internal/backchannel"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/git"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/git/catfile"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/git/gittest"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/git/localrepo"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/git2go"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/gitaly/config"
+	"gitlab.com/gitlab-org/gitaly/v14/internal/gitaly/transaction"
+	"gitlab.com/gitlab-org/gitaly/v14/internal/helper"
+	"gitlab.com/gitlab-org/gitaly/v14/internal/helper/text"
+	"gitlab.com/gitlab-org/gitaly/v14/internal/metadata/featureflag"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/testhelper"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/testhelper/testassert"
 	"gitlab.com/gitlab-org/gitaly/v14/internal/testhelper/testcfg"
+	"gitlab.com/gitlab-org/gitaly/v14/internal/testhelper/testserver"
+	"gitlab.com/gitlab-org/gitaly/v14/internal/transaction/txinfo"
+	"gitlab.com/gitlab-org/gitaly/v14/internal/transaction/voting"
 	"gitlab.com/gitlab-org/gitaly/v14/proto/go/gitalypb"
 	"gitlab.com/gitlab-org/gitaly/v14/streamio"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -601,6 +611,66 @@ func TestUserApplyPatchStableID(t *testing.T) {
 			Timezone: []byte("+0000"),
 		},
 	}, patchedCommit)
+}
+
+func TestUserApplyPatchTransactional(t *testing.T) {
+	t.Parallel()
+
+	testhelper.NewFeatureSets([]featureflag.FeatureFlag{
+		featureflag.TxExtendedFileLocking,
+	}).Run(t, testUserApplyPatchTransactional)
+}
+
+func testUserApplyPatchTransactional(t *testing.T, ctx context.Context) {
+	votes := 0
+	txManager := &transaction.MockManager{
+		VoteFn: func(context.Context, txinfo.Transaction, voting.Vote) error {
+			votes++
+			return nil
+		},
+	}
+
+	ctx, cfg, repoProto, repoPath, client := setupOperationsService(t, ctx, testserver.WithTransactionManager(txManager))
+
+	ctx, err := txinfo.InjectTransaction(ctx, 1, "node", true)
+	require.NoError(t, err)
+	ctx = peer.NewContext(ctx, &peer.Peer{
+		AuthInfo: backchannel.WithID(nil, 1234),
+	})
+	ctx = helper.IncomingToOutgoing(ctx)
+
+	patch := testhelper.MustReadFile(t, "testdata/0001-A-commit-from-a-patch.patch")
+
+	stream, err := client.UserApplyPatch(ctx)
+	require.NoError(t, err)
+	require.NoError(t, stream.Send(&gitalypb.UserApplyPatchRequest{
+		UserApplyPatchRequestPayload: &gitalypb.UserApplyPatchRequest_Header_{
+			Header: &gitalypb.UserApplyPatchRequest_Header{
+				Repository:   repoProto,
+				User:         gittest.TestUser,
+				TargetBranch: []byte("branch"),
+				Timestamp:    &timestamppb.Timestamp{Seconds: 1234512345},
+			},
+		},
+	}))
+	require.NoError(t, stream.Send(&gitalypb.UserApplyPatchRequest{
+		UserApplyPatchRequestPayload: &gitalypb.UserApplyPatchRequest_Patches{
+			Patches: patch,
+		},
+	}))
+	response, err := stream.CloseAndRecv()
+	require.NoError(t, err)
+
+	require.True(t, response.BranchUpdate.BranchCreated)
+
+	if featureflag.TxExtendedFileLocking.IsEnabled(ctx) {
+		require.Equal(t, 14, votes)
+	} else {
+		require.Equal(t, 12, votes)
+	}
+
+	splitIndex := gittest.Exec(t, cfg, "-C", repoPath, "config", "core.splitIndex")
+	require.Equal(t, "false", text.ChompBytes(splitIndex))
 }
 
 func TestFailedPatchApplyPatch(t *testing.T) {
