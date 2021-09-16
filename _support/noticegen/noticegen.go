@@ -66,7 +66,7 @@ func main() {
 			return nil
 		}
 
-		t, err := ioutil.ReadFile(path)
+		t, err := os.ReadFile(path)
 		if err != nil {
 			log.Fatal(err)
 		}
