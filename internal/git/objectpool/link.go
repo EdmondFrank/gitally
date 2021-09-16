@@ -38,7 +38,7 @@ func (o *ObjectPool) Link(ctx context.Context, repo *gitalypb.Repository) error 
 		return nil
 	}
 
-	tmp, err := ioutil.TempFile(filepath.Dir(altPath), "alternates")
+	tmp, err := os.CreateTemp(filepath.Dir(altPath), "alternates")
 	if err != nil {
 		return err
 	}
