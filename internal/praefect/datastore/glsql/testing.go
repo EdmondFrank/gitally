@@ -3,6 +3,7 @@ package glsql
 import (
 	"database/sql"
 	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"strconv"
