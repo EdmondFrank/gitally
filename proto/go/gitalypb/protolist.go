@@ -24,6 +24,7 @@ var GitalyProtos = []string{
 	"shared.proto",
 	"smarthttp.proto",
 	"ssh.proto",
+	"test.proto",
 	"transaction.proto",
 	"wiki.proto",
 }

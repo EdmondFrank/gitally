@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package gitaly;
+
+option go_package = "gitlab.com/gitlab-org/gitaly/v14/proto/go/gitalypb";
+
+import "lint.proto";
+import "shared.proto";
+
+service TestService {
+  // TestSidechannel lets a client test if it can establish a sidechannel connection to a Gitaly server.
+  rpc TestSidechannel(TestSidechannelRequest) returns (TestSidechannelResponse) {
+    option (op_type) = {
+      op: ACCESSOR
+    };
+  }
+}
+
+message TestSidechannelRequest {
+  // This repository field is here for the benefit of Praefect routing only.
+  Repository repository = 1 [(target_repository)=true];
+}
+
+message TestSidechannelResponse{}
