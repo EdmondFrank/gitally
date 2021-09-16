@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
+	"os"
 	"strings"
 	"testing"
 
@@ -236,10 +236,10 @@ func TestHeadReferenceWithNonExistingHead(t *testing.T) {
 	cfg, repo, repoPath := testcfg.BuildWithRepo(t)
 
 	// Write bad HEAD
-	require.NoError(t, ioutil.WriteFile(repoPath+"/HEAD", []byte("ref: refs/heads/nonexisting"), 0o644))
+	require.NoError(t, os.WriteFile(repoPath+"/HEAD", []byte("ref: refs/heads/nonexisting"), 0o644))
 	defer func() {
 		// Restore HEAD
-		require.NoError(t, ioutil.WriteFile(repoPath+"/HEAD", []byte("ref: refs/heads/master"), 0o644))
+		require.NoError(t, os.WriteFile(repoPath+"/HEAD", []byte("ref: refs/heads/master"), 0o644))
 	}()
 
 	ctx, cancel := testhelper.Context()
